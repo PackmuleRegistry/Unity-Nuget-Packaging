@@ -18,7 +18,7 @@ for i in "${!PACKAGES[@]}"; do
     # Snapshot the incompatible-package count before running, so we can tell which
     # entries (if any) Package.ps1 just added for this specific package.
     before_count=$(jq 'length' incompatible.json 2>/dev/null || echo 0)
-    pwsh ../Package.ps1 -PackageName "$pkg"
+    pwsh ./Package.ps1 -PackageName "$pkg"
 
     # Package.ps1 may emit multiple UPM packages per NuGet package (the requested
     # package plus any of its transitive dependencies), so publish each in turn.
