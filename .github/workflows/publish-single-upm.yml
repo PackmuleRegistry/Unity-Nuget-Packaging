@@ -1,0 +1,89 @@
+name: Publish Single Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package-name:
+        description: NuGet package id to convert and publish
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@${{ github.repository_owner }}"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Generate package
+        shell: bash
+        run: |
+          rm -rf artifacts
+          pwsh ./Package.ps1 -PackageName "$PACKAGE_NAME"
+
+          if ! compgen -G "artifacts/*/package.json" > /dev/null; then
+            echo "No compatible UPM packages were generated for $PACKAGE_NAME."
+            if [ -f incompatible.json ]; then
+              cat incompatible.json
+            fi
+            exit 1
+          fi
+        env:
+          PACKAGE_NAME: ${{ inputs.package-name }}
+
+      - name: Publish generated packages
+        shell: bash
+        run: |
+          registry_url="https://npm.pkg.github.com/@$REGISTRY_OWNER"
+          for dir in artifacts/*/; do
+            (
+              cd "$dir"
+              name=$(jq -r .name package.json)
+              version=$(jq -r .version package.json)
+
+              if npm view "$name@$version" version --registry="$registry_url" >/dev/null 2>&1; then
+                echo "$name@$version already published, skipping"
+              else
+                npm publish --registry="$registry_url"
+              fi
+            )
+          done
+        env:
+          REGISTRY_OWNER: ${{ github.repository_owner }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report incompatible packages
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -s incompatible.json ]; then
+            exit 0
+          fi
+
+          jq -c '.[]' incompatible.json | while read -r entry; do
+            id=$(echo "$entry" | jq -r .id)
+            version=$(echo "$entry" | jq -r .version)
+            requested=$(echo "$entry" | jq -r .requestedPackage)
+            title="Incompatible NuGet package: $id"
+            existing=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+            if [ -z "$existing" ]; then
+              gh issue create --title "$title" --body "NuGet package \`$id\` (version \`$version\`, requested via \`$requested\`) does not provide a netstandard2.0 or netstandard2.1 assembly and cannot be mirrored to UPM."
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
