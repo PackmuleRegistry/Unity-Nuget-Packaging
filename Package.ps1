@@ -65,6 +65,56 @@ if (Test-Path $incompatiblePath) {
     $incompatible = @(Get-Content $incompatiblePath -Raw | ConvertFrom-Json)
 }
 
+function Get-NuspecText {
+    param($Node)
+
+    if ($null -eq $Node) {
+        return $null
+    }
+
+    $value = if ($Node -is [System.Xml.XmlElement]) { $Node.InnerText.Trim() } else { ([string]$Node).Trim() }
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+
+    return $value
+}
+
+function Get-NuspecAttribute {
+    param(
+        $Node,
+        [string]$Name
+    )
+
+    if ($Node -isnot [System.Xml.XmlElement]) {
+        return $null
+    }
+
+    return Get-NuspecText $Node.GetAttribute($Name)
+}
+
+function Add-JsonProperty {
+    param(
+        [System.Collections.IDictionary]$Object,
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return
+    }
+
+    if ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+
+    if ($Value -is [System.Collections.ICollection] -and $Value.Count -eq 0) {
+        return
+    }
+
+    $Object[$Name] = $Value
+}
+
 # Outer loop: one folder per resolved NuGet package id (the requested package plus all of its transitive dependencies)
 # Inner loop: one folder per version of that package id (normally just one, since dotnet restore resolves a single version)
 Get-ChildItem $WorkDir -Directory | ForEach-Object {
@@ -99,21 +149,52 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
 
         # Map NuGet dependency ids to their mirrored UPM package names/scope so Unity can resolve them transitively
         $dependencies = @{}
-
         if ($meta.dependencies) {
             foreach ($d in $meta.dependencies.dependency) {
-                $dependencies["$Scope/org.nuget.$($d.id.ToLower())"] = $d.version
+                $dependencies["org.nuget.$($d.id.ToLower())"] = $d.version
             }
 
             # Newer nuspecs group dependencies per target framework instead of listing them flatly
             foreach ($group in $meta.dependencies.group) {
                 foreach ($d in $group.dependency) {
-                    $dependencies["$Scope/org.nuget.$($d.id.ToLower())"] = $d.version
+                    $dependencies["org.nuget.$($d.id.ToLower())"] = $d.version
                 }
             }
         }
 
-        $upmName = "org.nuget.$($meta.id.ToLower())"
+        $packageId = Get-NuspecText $meta.id
+        $description = Get-NuspecText $meta.description
+        $authors = Get-NuspecText $meta.authors
+        $owners = Get-NuspecText $meta.owners
+        $projectUrl = Get-NuspecText $meta.projectUrl
+        $licenseUrl = Get-NuspecText $meta.licenseUrl
+        $releaseNotes = Get-NuspecText $meta.releaseNotes
+        $copyright = Get-NuspecText $meta.copyright
+        $repositoryUrl = Get-NuspecAttribute $meta.repository "url"
+        $repositoryType = Get-NuspecAttribute $meta.repository "type"
+        $repositoryBranch = Get-NuspecText $meta.repository.branch
+        $repositoryCommit = Get-NuspecText $meta.repository.commit
+        $licenseType = Get-NuspecAttribute $meta.license "type"
+        $licenseValue = Get-NuspecText $meta.license
+        $tags = Get-NuspecText $meta.tags
+        
+        $keywords = [System.Collections.Generic.List[string]]::new()
+        if ($tags) {
+            foreach ($keyword in ($tags -split '\s+' | Where-Object { $_ })) {
+                $keywords.Add($keyword)
+            }
+        }
+        $authorName = if ($authors) { $authors } elseif ($owners) { $owners } else { "NuGet" }
+
+        $license = $null
+        if ($licenseValue -and $licenseType -eq "expression") {
+            $license = $licenseValue
+        }
+        elseif ($licenseValue -and $licenseType -eq "file") {
+            $license = "SEE LICENSE IN $licenseValue"
+        }
+
+        $upmName = "org.nuget.$($packageId.ToLower())"
         $targetDir = Join-Path $OutputDir $upmName
         if (Test-Path $targetDir) {
             # dotnet restore can extract the same package id under multiple case-variant folders on
@@ -122,6 +203,7 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
             return
         }
         New-Item -ItemType Directory -Path $targetDir | Out-Null
+
         # Copy everything except NuGet-specific signing/cache metadata that Unity doesn't need
         Get-ChildItem $packageDir -Exclude *.nupkg, *.nupkg.sha512, *.signature.p7s, .nupkg.metadata | ForEach-Object {
             Copy-Item $_.FullName $targetDir -Recurse
@@ -129,13 +211,30 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
 
         # This package.json is what actually gets published to the npm/GitHub Packages registry and
         # is what Unity's Package Manager reads to resolve the package and its dependencies
-        @{
+        $packageJson = [ordered]@{
             name         = "$Scope/$upmName"
             version      = $meta.version
-            displayName  = $meta.id
-            description  = $meta.description
+            displayName  = $packageId
+            description  = $description
+            author       = @{
+                name = $authorName
+            }
             dependencies = $dependencies
-        } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $targetDir "package.json")
+        }
+
+        Add-JsonProperty $packageJson "keywords" $keywords
+        Add-JsonProperty $packageJson "homepage" $projectUrl
+        Add-JsonProperty $packageJson "license" $license
+        Add-JsonProperty $packageJson "licensesUrl" $licenseUrl
+
+        if ($repositoryUrl) {
+            Add-JsonProperty $packageJson "repository" ([ordered]@{
+                    type = if ($repositoryType) { $repositoryType } else { "git" }
+                    url  = $repositoryUrl
+                })
+        }
+
+        $packageJson | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $targetDir "package.json")
         Write-Host "Generated $Scope/$upmName"
     }
 }
