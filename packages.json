@@ -1,0 +1,9 @@
+{
+  "packages": [
+    "Newtonsoft.Json",
+    "Microsoft.Extensions.DependencyInjection",
+    "Microsoft.Extensions.Logging",
+    "Serilog",
+    "Polly"
+  ]
+}

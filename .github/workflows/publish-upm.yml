@@ -1,0 +1,57 @@
+name: Mirror Packages
+on:
+    workflow_dispatch:
+
+jobs:
+    generate-matrix:
+        runs-on: ubuntu-latest
+        outputs:
+            packages: ${{ steps.matrix.outputs.packages }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - id: matrix
+              run: |
+                  PACKAGES=$(jq -c '.packages' packages.json)
+                  echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+
+    mirror:
+        needs: generate-matrix
+        runs-on: ubuntu-latest
+
+        strategy:
+            fail-fast: false
+            matrix:
+                package: ${{ fromJson(needs.generate-matrix.outputs.packages) }}
+
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - uses: actions/checkout@v4
+
+            # Ensure Node.js is installed
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "20.x"
+                  registry-url: "https://npm.pkg.github.com"
+                  scope: "@thetestgame"
+            
+            # Ensure .NET is installed
+            - uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: 9.0.x
+
+            # Generate the Unity Package using the PowerShell script
+            - name: Generate Package
+              shell: pwsh
+              run: |
+                  ./Package.ps1 "${{ matrix.package }}"
+            
+            # Publish the generated Unity Package to GitHub Packages
+            - name: Publish to GitHub Packages
+              run: npm publish
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
