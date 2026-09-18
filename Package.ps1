@@ -108,6 +108,101 @@ function Add-JsonProperty {
     $Object[$Name] = $Value
 }
 
+function New-DeterministicUnityGuid {
+    param([string]$Input)
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Input)
+    $hash = [System.Security.Cryptography.MD5]::HashData($bytes)
+    return -join ($hash | ForEach-Object { $_.ToString("x2") })
+}
+
+function New-UnityMetaFile {
+    param(
+        [System.IO.FileSystemInfo]$Asset,
+        [string]$PackageRoot,
+        [string]$PackageName,
+        [bool]$IsDirectory
+    )
+
+    $relativePath = [System.IO.Path]::GetRelativePath($PackageRoot, $Asset.FullName).Replace([System.IO.Path]::DirectorySeparatorChar, '/')
+    $metaPath = "$($Asset.FullName).meta"
+    if (Test-Path $metaPath) {
+        return
+    }
+
+    if ($IsDirectory) {
+        @"
+fileFormatVersion: 2
+guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
+folderAsset: yes
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+"@ | Set-Content $metaPath
+                return
+    }
+
+        if ($Asset.Extension -eq ".dll") {
+                @"
+fileFormatVersion: 2
+guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
+PluginImporter:
+    externalObjects: {}
+    serializedVersion: 2
+    iconMap: {}
+    executionOrder: {}
+    defineConstraints: []
+    isPreloaded: 0
+    isOverridable: 0
+    isExplicitlyReferenced: 0
+    validateReferences: 1
+    platformData:
+    - first:
+            Any: 
+        second:
+            enabled: 1
+            settings: {}
+    - first:
+            Editor: Editor
+        second:
+            enabled: 0
+            settings:
+                DefaultValueInitialized: true
+    userData: 
+    assetBundleName: 
+    assetBundleVariant: 
+"@ | Set-Content $metaPath
+                return
+        }
+
+        @"
+fileFormatVersion: 2
+guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
+DefaultImporter:
+    externalObjects: {}
+    userData: 
+    assetBundleName: 
+    assetBundleVariant: 
+"@ | Set-Content $metaPath
+}
+
+function New-UnityMetaFiles {
+        param(
+                [string]$PackageRoot,
+                [string]$PackageName
+        )
+
+        Get-ChildItem $PackageRoot -Directory -Recurse | ForEach-Object {
+                New-UnityMetaFile $_ $PackageRoot $PackageName $true
+        }
+
+        Get-ChildItem $PackageRoot -File -Recurse | Where-Object { $_.Extension -ne ".meta" } | ForEach-Object {
+                New-UnityMetaFile $_ $PackageRoot $PackageName $false
+        }
+}
+
 # Outer loop: one folder per resolved NuGet package id (the requested package plus all of its transitive dependencies)
 # Inner loop: one folder per version of that package id (normally just one, since dotnet restore resolves a single version)
 Get-ChildItem $WorkDir -Directory | ForEach-Object {
@@ -125,11 +220,16 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         # Unity only understands netstandard2.0/2.1 assemblies; anything else (net48-only, netcoreapp-only,
         # analyzer-only packages with no lib folder, etc.) can't be consumed by the Unity Package Manager
         $libDir = Join-Path $packageDir "lib"
-        $hasNetStandard = (Test-Path $libDir) -and (
-            Get-ChildItem $libDir -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -in @("netstandard2.0", "netstandard2.1") }
-        )
-        if (-not $hasNetStandard) {
+        $supportedLibDirs = if (Test-Path $libDir) {
+            @(Get-ChildItem $libDir -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -in @("netstandard2.0", "netstandard2.1") })
+        }
+        else {
+            @()
+        }
+        
+        $targetFramework = @("netstandard2.1", "netstandard2.0") | Where-Object { $supportedLibDirs.Name -contains $_ } | Select-Object -First 1
+        if (-not $targetFramework) {
             # Record it instead of publishing so CI can flag it (e.g. file a GitHub issue) rather than fail silently
             Write-Host "::warning::$($meta.id) $($meta.version) has no netstandard2.0/netstandard2.1 assemblies, skipping"
             $incompatible += [pscustomobject]@{
@@ -202,6 +302,13 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
             Copy-Item $_.FullName $targetDir -Recurse
         }
 
+        $targetLibDir = Join-Path $targetDir "lib"
+        if (Test-Path $targetLibDir) {
+            Get-ChildItem $targetLibDir -Directory | Where-Object { $_.Name -ne $targetFramework } | ForEach-Object {
+                Remove-Item $_.FullName -Recurse -Force
+            }
+        }
+
         # This package.json is what actually gets published to the npm/GitHub Packages registry and
         # is what Unity's Package Manager reads to resolve the package and its dependencies
         $packageJson = [ordered]@{
@@ -228,6 +335,7 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         }
 
         $packageJson | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $targetDir "package.json")
+        New-UnityMetaFiles $targetDir $upmName
         Write-Host "Generated $upmName"
     }
 }
