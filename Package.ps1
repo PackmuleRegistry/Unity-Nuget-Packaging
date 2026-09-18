@@ -15,7 +15,7 @@
 #>
 param(
     [Parameter(Mandatory)]
-    [string]$PackageName,
+    [string]$PackageName
 )
 
 $ErrorActionPreference = "Stop"
