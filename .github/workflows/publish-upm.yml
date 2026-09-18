@@ -70,7 +70,16 @@ jobs:
                       rm -rf artifacts
                       pwsh ./Package.ps1 -PackageName "$pkg"
                       for dir in artifacts/*/; do
-                          (cd "$dir" && npm publish)
+                          (
+                              cd "$dir"
+                              name=$(jq -r .name package.json)
+                              version=$(jq -r .version package.json)
+                              if npm view "$name@$version" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+                                  echo "$name@$version already published, skipping"
+                              else
+                                  npm publish --access public
+                              fi
+                          )
                       done
                       echo "::endgroup::"
                   done
