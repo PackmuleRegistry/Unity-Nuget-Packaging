@@ -52,7 +52,7 @@ jobs:
               with:
                   node-version: "20.x"
                   registry-url: "https://npm.pkg.github.com"
-                  scope: "@thetestgame"
+                  scope: "@packmuleregistry"
 
             # Ensure .NET is installed
             - uses: actions/setup-dotnet@v4

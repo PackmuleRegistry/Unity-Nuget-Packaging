@@ -11,15 +11,18 @@
     The name of the NuGet package to convert to a UPM package.
 
 .PARAMETER Scope
-    The scope to use for the generated UPM package name (default is "@PackmuleRegistry").
+    The scope to use for the generated UPM package name (default is "@packmuleregistry").
 
 .EXAMPLE
-    .\Package.ps1 -PackageName "Newtonsoft.Json" -Scope "@PackmuleRegistry"
+    .\Package.ps1 -PackageName "Newtonsoft.Json" -Scope "@packmuleregistry"
 #>
 param(
     [Parameter(Mandatory)]
     [string]$PackageName,
-    [string]$Scope = "@PackmuleRegistry"
+    
+    # npm scopes are always lowercased by npm/GitHub Packages; an upper-case scope here would silently
+    # fail to match the .npmrc registry mapping and fall back to the public npm registry
+    [string]$Scope = "@packmuleregistry"
 )
 
 $ErrorActionPreference = "Stop"
