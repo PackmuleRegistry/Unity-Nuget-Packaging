@@ -3,15 +3,17 @@ on:
     workflow_dispatch:
 
 # Package count is unbounded, but GitHub Actions matrices cap at 256 jobs.
-# We fan out over a fixed number of shards instead of one job per package.
+# We fan out to as many shards as the matrix allows so each shard processes as
+# few packages as possible, then round-robin any remainder across those shards.
 env:
-    SHARD_COUNT: 20
+    MAX_SHARDS: 256
 
 jobs:
     generate-matrix:
         runs-on: ubuntu-latest
         outputs:
             shards: ${{ steps.matrix.outputs.shards }}
+            shard-count: ${{ steps.matrix.outputs.shard-count }}
 
         steps:
             - uses: actions/checkout@v4
@@ -19,9 +21,10 @@ jobs:
             - id: matrix
               run: |
                   COUNT=$(jq '.packages | length' packages.json)
-                  SHARDS=$((COUNT < SHARD_COUNT ? COUNT : SHARD_COUNT))
+                  SHARDS=$((COUNT < MAX_SHARDS ? COUNT : MAX_SHARDS))
                   if [ "$SHARDS" -lt 1 ]; then SHARDS=1; fi
                   SHARD_LIST=$(seq 0 $((SHARDS - 1)) | jq -R 'tonumber' | jq -sc .)
+                  echo "shard-count=$SHARDS" >> $GITHUB_OUTPUT
                   echo "shards=$SHARD_LIST" >> $GITHUB_OUTPUT
 
     mirror:
@@ -72,4 +75,5 @@ jobs:
                       echo "::endgroup::"
                   done
               env:
+                  SHARD_COUNT: ${{ needs.generate-matrix.outputs.shard-count }}
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

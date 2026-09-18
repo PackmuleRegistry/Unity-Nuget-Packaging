@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)]
-    [string]$PackageName
+    [string]$PackageName,
+    [string]$Scope = "@thetestgame"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,12 +46,12 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
 
         if ($meta.dependencies) {
             foreach ($d in $meta.dependencies.dependency) {
-                $dependencies["org.nuget.$($d.id.ToLower())"] = $d.version
+                $dependencies["$Scope/org.nuget.$($d.id.ToLower())"] = $d.version
             }
 
             foreach ($group in $meta.dependencies.group) {
                 foreach ($d in $group.dependency) {
-                    $dependencies["org.nuget.$($d.id.ToLower())"] = $d.version
+                    $dependencies["$Scope/org.nuget.$($d.id.ToLower())"] = $d.version
                 }
             }
         }
@@ -63,12 +64,12 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         }
 
         @{
-            name         = $upmName
+            name         = "$Scope/$upmName"
             version      = $meta.version
             displayName  = $meta.id
             description  = $meta.description
             dependencies = $dependencies
         } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $targetDir "package.json")
-        Write-Host "Generated $upmName"
+        Write-Host "Generated $Scope/$upmName"
     }
 }
