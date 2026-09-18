@@ -2,19 +2,27 @@ name: Mirror Packages
 on:
     workflow_dispatch:
 
+# Package count is unbounded, but GitHub Actions matrices cap at 256 jobs.
+# We fan out over a fixed number of shards instead of one job per package.
+env:
+    SHARD_COUNT: 20
+
 jobs:
     generate-matrix:
         runs-on: ubuntu-latest
         outputs:
-            packages: ${{ steps.matrix.outputs.packages }}
+            shards: ${{ steps.matrix.outputs.shards }}
 
         steps:
             - uses: actions/checkout@v4
 
             - id: matrix
               run: |
-                  PACKAGES=$(jq -c '.packages' packages.json)
-                  echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+                  COUNT=$(jq '.packages | length' packages.json)
+                  SHARDS=$((COUNT < SHARD_COUNT ? COUNT : SHARD_COUNT))
+                  if [ "$SHARDS" -lt 1 ]; then SHARDS=1; fi
+                  SHARD_LIST=$(seq 0 $((SHARDS - 1)) | jq -R 'tonumber' | jq -sc .)
+                  echo "shards=$SHARD_LIST" >> $GITHUB_OUTPUT
 
     mirror:
         needs: generate-matrix
@@ -23,7 +31,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                package: ${{ fromJson(needs.generate-matrix.outputs.packages) }}
+                shard: ${{ fromJson(needs.generate-matrix.outputs.shards) }}
 
         permissions:
             contents: read
@@ -38,20 +46,30 @@ jobs:
                   node-version: "20.x"
                   registry-url: "https://npm.pkg.github.com"
                   scope: "@thetestgame"
-            
+
             # Ensure .NET is installed
             - uses: actions/setup-dotnet@v4
               with:
                   dotnet-version: 9.0.x
 
-            # Generate the Unity Package using the PowerShell script
-            - name: Generate Package
-              shell: pwsh
+            # Generate and publish every package assigned to this shard (round-robin by index)
+            - name: Generate and Publish Packages
+              shell: bash
               run: |
-                  ./Package.ps1 "${{ matrix.package }}"
-            
-            # Publish the generated Unity Package to GitHub Packages
-            - name: Publish to GitHub Packages
-              run: npm publish
+                  mapfile -t PACKAGES < <(jq -r '.packages[]' packages.json)
+                  for i in "${!PACKAGES[@]}"; do
+                      if [ $((i % SHARD_COUNT)) -ne "${{ matrix.shard }}" ]; then
+                          continue
+                      fi
+
+                      pkg="${PACKAGES[$i]}"
+                      echo "::group::$pkg"
+                      rm -rf artifacts
+                      pwsh ./Package.ps1 -PackageName "$pkg"
+                      for dir in artifacts/*/; do
+                          (cd "$dir" && npm publish)
+                      done
+                      echo "::endgroup::"
+                  done
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
