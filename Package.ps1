@@ -10,19 +10,12 @@
 .PARAMETER PackageName
     The name of the NuGet package to convert to a UPM package.
 
-.PARAMETER Scope
-    The scope to use for the generated UPM package name (default is "@packmuleregistry").
-
 .EXAMPLE
     .\Package.ps1 -PackageName "Newtonsoft.Json" -Scope "@packmuleregistry"
 #>
 param(
     [Parameter(Mandatory)]
     [string]$PackageName,
-    
-    # npm scopes are always lowercased by npm/GitHub Packages; an upper-case scope here would silently
-    # fail to match the .npmrc registry mapping and fall back to the public npm registry
-    [string]$Scope = "@packmuleregistry"
 )
 
 $ErrorActionPreference = "Stop"
@@ -199,7 +192,7 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         if (Test-Path $targetDir) {
             # dotnet restore can extract the same package id under multiple case-variant folders on
             # case-sensitive filesystems (e.g. Linux runners), which would otherwise process it twice
-            Write-Host "$Scope/$upmName already generated this run, skipping duplicate"
+            Write-Host "$upmName already generated this run, skipping duplicate"
             return
         }
         New-Item -ItemType Directory -Path $targetDir | Out-Null
@@ -212,7 +205,7 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         # This package.json is what actually gets published to the npm/GitHub Packages registry and
         # is what Unity's Package Manager reads to resolve the package and its dependencies
         $packageJson = [ordered]@{
-            name         = "$Scope/$upmName"
+            name         = "$upmName"
             version      = $meta.version
             displayName  = $packageId
             description  = $description
@@ -235,7 +228,7 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
         }
 
         $packageJson | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $targetDir "package.json")
-        Write-Host "Generated $Scope/$upmName"
+        Write-Host "Generated $upmName"
     }
 }
 
