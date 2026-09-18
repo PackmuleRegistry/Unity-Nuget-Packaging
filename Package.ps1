@@ -11,15 +11,15 @@
     The name of the NuGet package to convert to a UPM package.
 
 .PARAMETER Scope
-    The scope to use for the generated UPM package name (default is "@thetestgame").
+    The scope to use for the generated UPM package name (default is "@PackmuleRegistry").
 
 .EXAMPLE
-    .\Package.ps1 -PackageName "Newtonsoft.Json" -Scope "@thetestgame"
+    .\Package.ps1 -PackageName "Newtonsoft.Json" -Scope "@PackmuleRegistry"
 #>
 param(
     [Parameter(Mandatory)]
     [string]$PackageName,
-    [string]$Scope = "@thetestgame"
+    [string]$Scope = "@PackmuleRegistry"
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,6 +112,12 @@ Get-ChildItem $WorkDir -Directory | ForEach-Object {
 
         $upmName = "org.nuget.$($meta.id.ToLower())"
         $targetDir = Join-Path $OutputDir $upmName
+        if (Test-Path $targetDir) {
+            # dotnet restore can extract the same package id under multiple case-variant folders on
+            # case-sensitive filesystems (e.g. Linux runners), which would otherwise process it twice
+            Write-Host "$Scope/$upmName already generated this run, skipping duplicate"
+            return
+        }
         New-Item -ItemType Directory -Path $targetDir | Out-Null
         # Copy everything except NuGet-specific signing/cache metadata that Unity doesn't need
         Get-ChildItem $packageDir -Exclude *.nupkg, *.nupkg.sha512, *.signature.p7s, .nupkg.metadata | ForEach-Object {
