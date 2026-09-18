@@ -109,9 +109,13 @@ function Add-JsonProperty {
 }
 
 function New-DeterministicUnityGuid {
-    param([string]$Input)
+    param([string]$Seed)
 
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Input)
+    if ([string]::IsNullOrWhiteSpace($Seed)) {
+        throw "Unity .meta GUID seed cannot be empty."
+    }
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Seed)
     $hash = [System.Security.Cryptography.MD5]::HashData($bytes)
     return -join ($hash | ForEach-Object { $_.ToString("x2") })
 }
@@ -126,6 +130,7 @@ function New-UnityMetaFile {
 
     $relativePath = [System.IO.Path]::GetRelativePath($PackageRoot, $Asset.FullName).Replace([System.IO.Path]::DirectorySeparatorChar, '/')
     $metaPath = "$($Asset.FullName).meta"
+    $guid = New-DeterministicUnityGuid "$PackageName/$relativePath"
     if (Test-Path $metaPath) {
         return
     }
@@ -133,7 +138,7 @@ function New-UnityMetaFile {
     if ($IsDirectory) {
         @"
 fileFormatVersion: 2
-guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
+guid: $guid
 folderAsset: yes
 DefaultImporter:
   externalObjects: {}
@@ -141,66 +146,66 @@ DefaultImporter:
   assetBundleName: 
   assetBundleVariant: 
 "@ | Set-Content $metaPath
-                return
+        return
     }
 
-        if ($Asset.Extension -eq ".dll") {
-                @"
-fileFormatVersion: 2
-guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
-PluginImporter:
-    externalObjects: {}
-    serializedVersion: 2
-    iconMap: {}
-    executionOrder: {}
-    defineConstraints: []
-    isPreloaded: 0
-    isOverridable: 0
-    isExplicitlyReferenced: 0
-    validateReferences: 1
-    platformData:
-    - first:
-            Any: 
-        second:
-            enabled: 1
-            settings: {}
-    - first:
-            Editor: Editor
-        second:
-            enabled: 0
-            settings:
-                DefaultValueInitialized: true
-    userData: 
-    assetBundleName: 
-    assetBundleVariant: 
-"@ | Set-Content $metaPath
-                return
-        }
-
+    if ($Asset.Extension -eq ".dll") {
         @"
 fileFormatVersion: 2
-guid: $(New-DeterministicUnityGuid "$PackageName/$relativePath")
+guid: $guid
+PluginImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  iconMap: {}
+  executionOrder: {}
+  defineConstraints: []
+  isPreloaded: 0
+  isOverridable: 0
+  isExplicitlyReferenced: 0
+  validateReferences: 1
+  platformData:
+  - first:
+      Any: 
+    second:
+      enabled: 1
+      settings: {}
+  - first:
+      Editor: Editor
+    second:
+      enabled: 0
+      settings:
+        DefaultValueInitialized: true
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+"@ | Set-Content $metaPath
+        return
+    }
+
+    @"
+fileFormatVersion: 2
+guid: $guid
 DefaultImporter:
-    externalObjects: {}
-    userData: 
-    assetBundleName: 
-    assetBundleVariant: 
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
 "@ | Set-Content $metaPath
 }
 
 function New-UnityMetaFiles {
-        param(
-                [string]$PackageRoot,
-                [string]$PackageName
-        )
+    param(
+        [string]$PackageRoot,
+        [string]$PackageName
+    )
 
-        Get-ChildItem $PackageRoot -Directory -Recurse | ForEach-Object {
-                New-UnityMetaFile $_ $PackageRoot $PackageName $true
-        }
+    Get-ChildItem $PackageRoot -Directory -Recurse | ForEach-Object {
+        New-UnityMetaFile -Asset $_ -PackageRoot $PackageRoot -PackageName $PackageName -IsDirectory $true
+    }
 
-        Get-ChildItem $PackageRoot -File -Recurse | Where-Object { $_.Extension -ne ".meta" } | ForEach-Object {
-                New-UnityMetaFile $_ $PackageRoot $PackageName $false
-        }
+    Get-ChildItem $PackageRoot -File -Recurse | Where-Object { $_.Extension -ne ".meta" } | ForEach-Object {
+        New-UnityMetaFile -Asset $_ -PackageRoot $PackageRoot -PackageName $PackageName -IsDirectory $false
+    }
 }
 
 # Outer loop: one folder per resolved NuGet package id (the requested package plus all of its transitive dependencies)
